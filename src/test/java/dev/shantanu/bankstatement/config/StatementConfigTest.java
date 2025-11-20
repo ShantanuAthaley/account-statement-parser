@@ -14,6 +14,6 @@ class StatementConfigTest {
     List<JsonObject> sections = configuration.getSections();
     Assertions.assertNotNull(sections);
     Assertions.assertTrue(sections.size() > 1);
-    Assertions.assertEquals(3, sections.size() );
+    Assertions.assertEquals(4, sections.size());
   }
 }
