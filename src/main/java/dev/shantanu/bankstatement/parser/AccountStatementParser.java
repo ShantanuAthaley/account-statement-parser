@@ -1,7 +1,8 @@
 package dev.shantanu.bankstatement.parser;
 
-import dev.shantanu.bankstatement.common.AccountInformation;
+import dev.shantanu.bankstatement.common.AccountStatement;
+import java.io.IOException;
 
 public interface AccountStatementParser {
-  AccountInformation parse();
+  AccountStatement getTransactionInformation() throws IOException;
 }

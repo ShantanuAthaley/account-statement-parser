@@ -1,0 +1,154 @@
+{
+  "iciciBankSearchStatementConfig": {
+    "version": "1.0",
+    "description": "ICICI bank search statement parser configuration",
+    "sections": [
+      {
+        "id": "header",
+        "order": 1,
+        "name": "header_title",
+        "title": "Detailed Statement",
+        "searchKeywords": [
+          "DETAILED STATEMENT"
+        ],
+        "relativeSearchRange": {
+          "rows": 5,
+          "columns": 5
+        }
+      },
+      {
+        "id": "search_criteria",
+        "order": 2,
+        "title": "Search",
+        "skip": false,
+        "mappedTo": "TransactionInfo",
+        "searchKeywords": [
+          "Search"
+        ],
+        "fields": [
+          {
+            "label": "Account Number",
+            "name": "accountInformation",
+            "pattern": "(?<accountNumber>\\d{12})\\s+\\(\\s+(?<currency>[A-Z]{3})\\s+\\)\\s+-\\s+(?<fullName>.+)",
+            "patternMappedFields": [
+              "accountNumber",
+              "currency",
+              "fullName"
+            ],
+            "valueAfterText": true
+          },
+          {
+            "label": "Transaction Date from",
+            "name": "transactionFrom",
+            "pattern": "\\d{2}/\\d{2}/\\d{4}",
+            "patternMappedFields": [
+              "transactionFrom"
+            ],
+            "valueAfterText": true
+          },
+          {
+            "label": "To",
+            "name": "transactionTo",
+            "pattern": "\\d{2}/\\d{2}/\\d{4}",
+            "patternMappedFields": [
+              "transactionTo"
+            ],
+            "valueAfterText": true
+          }
+        ]
+      },
+      {
+        "id": "advance_search",
+        "order": 2,
+        "title": "Advanced Search",
+        "skip": true,
+        "searchKeywords": [
+          "Advanced Search"
+        ],
+        "fields": [
+          {
+            "name": "amount_from",
+            "label": "Amount from",
+            "pattern": "-?\\d+(\\.\\d+)?",
+            "patternMappedFields": [
+              "amount_from"
+            ],
+            "valueAfterText": true
+          },
+          {
+            "name": "amount_to",
+            "label": "To",
+            "pattern": "-?\\d+(\\.\\d+)?",
+            "patternMappedFields": [
+              "amount_to"
+            ],
+            "valueAfterText": true
+          },
+          {
+            "name": "check_number_from",
+            "label": "Cheque number from",
+            "pattern": "-?\\d+(\\.\\d+)?",
+            "patternMappedFields": [
+              "amount_from"
+            ],
+            "valueAfterText": true
+          }
+        ]
+      },
+      {
+        "id": "transactions_table",
+        "order": 3,
+        "title": "Transactions List",
+        "skip": false,
+        "searchKeywords": [
+          "Transactions List"
+        ],
+        "table": {
+          "headerRowOffset": 1,
+          "columns": [
+            {
+              "displayName": "S No.",
+              "mappedTo": "serialNumber",
+              "dataType": "int"
+            },
+            {
+              "displayName": "Value Date",
+              "mappedTo": "valueDate",
+              "dataType": "LocalDate"
+            },
+            {
+              "displayName": "Transaction Date",
+              "mappedTo": "transactionDate",
+              "dataType": "LocalDate"
+            },
+            {
+              "displayName": "Cheque Number",
+              "mappedTo": "chequeNumber",
+              "dataType": "String"
+            },
+            {
+              "displayName": "Transaction Remarks",
+              "mappedTo": "remarks",
+              "dataType": "String"
+            },
+            {
+              "displayName": "Withdrawal Amount(INR)",
+              "mappedTo": "withdrawalAmount",
+              "dataType": "BigDecimal"
+            },
+            {
+              "displayName": "Deposit Amount(INR)",
+              "mappedTo": "depositAmount",
+              "dataType": "BigDecimal"
+            },
+            {
+              "displayName": "Balance(INR)",
+              "mappedTo": "balance",
+              "dataType": "BigDecimal"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
