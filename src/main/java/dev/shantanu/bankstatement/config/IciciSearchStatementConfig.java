@@ -1,13 +1,24 @@
 package dev.shantanu.bankstatement.config;
 
-public record IciciSearchStatementConfig() implements StatementConfiguration {
-  static StatementConfiguration.ConfigurationBuilder configurationBuilder = new ConfigurationBuilder(StatementType.ICICI_BANK_SEARCH_STATEMENT);
+import com.google.gson.JsonObject;
+import java.util.List;
+
+public final class IciciSearchStatementConfig implements StatementConfiguration {
+  private static final Config CONFIG;
+
   public IciciSearchStatementConfig() {
-    configurationBuilder.build();
   }
 
   @Override
-  public StatementType getStatementType() {
-    return configurationBuilder.type();
+  public StatementType statementType() {
+    return CONFIG.statementType();
+  }
+
+  public List<JsonObject> getSections() {
+    return CONFIG.getSections();
+  }
+
+  static {
+    CONFIG = StatementConfiguration.builder(StatementType.ICICI_BANK_SEARCH_STATEMENT).build();
   }
 }

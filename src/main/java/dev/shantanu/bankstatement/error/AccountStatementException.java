@@ -5,4 +5,3 @@ public class AccountStatementException extends RuntimeException {
     super(code.getErrorMessage() + " ." + message, cause);
   }
 }
-
