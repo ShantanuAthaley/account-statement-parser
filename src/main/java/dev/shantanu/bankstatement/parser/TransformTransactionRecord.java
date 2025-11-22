@@ -43,66 +43,73 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
   public static final String CONFIG_KEY_DISPLAY_NAME = "displayName";
   public static final String CONFIG_KEY_DATA_TYPE = "dataType";
   public static final String CONFIG_KEY_VALUE = "value";
+  public static final String ERROR = "error";
   private static final Logger logger = LoggerFactory.getLogger(TransformTransactionRecord.class);
 
-  private static @NotNull JsonObject parseTransactionRow(JsonObject jsonObject) {
+  private static @NotNull JsonObject parseDataInTransactionRow(JsonObject jsonObject) {
     JsonObject outputJson = new JsonObject();
     String dataType = jsonObject.get(CONFIG_KEY_DATA_TYPE).getAsString();
 
     String recordKey = jsonObject.get(CONFIG_KEY_MAPPED_TO).getAsString();
     String recordValue = jsonObject.get(CONFIG_KEY_VALUE).getAsString();
-    final String error = "error";
+
     switch (dataType) {
-      case "int" -> {
-        try {
-          int value = Integer.parseInt(recordValue);
-          outputJson.addProperty(recordKey, value);
-        } catch (NumberFormatException _) {
-          outputJson.addProperty(error, String.format("Error parsing  %s as integer value.", recordValue));
-          outputJson.addProperty(recordKey, recordValue);
-        }
-      }
-      case "LocalDate" -> {
-        LocalDate parsed = null;
-        String[] patterns = {"dd/MM/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "d/M/yyyy"};
-        for (String p : patterns) {
-          try {
-            parsed = LocalDate.parse(recordValue, DateTimeFormatter.ofPattern(p));
-            break;
-          } catch (DateTimeParseException _) {
-            //ignore
-          }
-        }
-        if (parsed != null) {
-          outputJson.addProperty(recordKey, String.valueOf(parsed));
-        } else {
-          outputJson.addProperty(error, String.format("Error parsing  %s as LocalDate value.", recordValue));
-          outputJson.addProperty(recordKey, String.valueOf(recordValue));
-        }
-      }
-      case "BigDecimal" -> {
-        try {
-          String s = recordValue == null ? "" : recordValue.trim();
-          s = s.replace("₹", "");
-          s = s.replaceAll("(?i)INR|RS|CR|DR", "");
-          boolean negative = false;
-          if (s.startsWith("(") && s.endsWith(")")) {
-            negative = true;
-            s = s.substring(1, s.length() - 1);
-          }
-          s = s.replace(",", "").replace("\\s+", "");
-          BigDecimal value = StringUtils.isBlank(s) ? BigDecimal.valueOf(0.0) : new BigDecimal(s);
-          if (negative) value = value.negate();
-          outputJson.addProperty(recordKey, value);
-        } catch (Exception _) {
-          outputJson.addProperty(error, String.format("Error parsing  %s as BigDecimal value", recordValue));
-          outputJson.addProperty(recordKey, recordValue);
-        }
-      }
+      case "int" -> parseNumericValues(recordValue, outputJson, recordKey, ERROR);
+      case "LocalDate" -> parseDateValues(recordValue, outputJson, recordKey, ERROR);
+      case "BigDecimal" -> parseDecimalValues(recordValue, outputJson, recordKey, ERROR);
       case "String" -> outputJson.addProperty(recordKey, recordValue);
       default -> throw new IllegalStateException("Not supported data-type for conversion: " + dataType);
     }
     return outputJson;
+  }
+
+  private static void parseNumericValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
+    try {
+      int value = Integer.parseInt(recordValue);
+      outputJson.addProperty(recordKey, value);
+    } catch (NumberFormatException _) {
+      outputJson.addProperty(error, String.format("Error parsing  %s as integer value.", recordValue));
+      outputJson.addProperty(recordKey, recordValue);
+    }
+  }
+
+  private static void parseDecimalValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
+    try {
+      String s = recordValue == null ? "" : recordValue.trim();
+      s = s.replace("₹", "");
+      s = s.replaceAll("(?i)INR|RS|CR|DR", "");
+      boolean negative = false;
+      if (s.startsWith("(") && s.endsWith(")")) {
+        negative = true;
+        s = s.substring(1, s.length() - 1);
+      }
+      s = s.replace(",", "").replace("\\s+", "");
+      BigDecimal value = StringUtils.isBlank(s) ? BigDecimal.valueOf(0.0) : new BigDecimal(s);
+      if (negative) value = value.negate();
+      outputJson.addProperty(recordKey, value);
+    } catch (Exception _) {
+      outputJson.addProperty(error, String.format("Error parsing  %s as BigDecimal value", recordValue));
+      outputJson.addProperty(recordKey, recordValue);
+    }
+  }
+
+  private static void parseDateValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
+    LocalDate parsed = null;
+    String[] patterns = {"dd/MM/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "d/M/yyyy"};
+    for (String p : patterns) {
+      try {
+        parsed = LocalDate.parse(recordValue, DateTimeFormatter.ofPattern(p));
+        break;
+      } catch (DateTimeParseException _) {
+        //ignore
+      }
+    }
+    if (parsed != null) {
+      outputJson.addProperty(recordKey, String.valueOf(parsed));
+    } else {
+      outputJson.addProperty(error, String.format("Error parsing  %s as LocalDate value.", recordValue));
+      outputJson.addProperty(recordKey, String.valueOf(recordValue));
+    }
   }
 
   private static @NotNull JsonObject applyColumnFieldConfig(Row rowToRead, Entry<ColumnField, Integer> entry, DataFormatter formatter, FormulaEvaluator evaluator) {
@@ -146,14 +153,7 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
         break;
     }
     Row headerRow = sheet.getRow(sheet.getActiveCell().getRow());
-    DataFormatter headerFormatter = new DataFormatter();
-    Map<String, Integer> headerIndexMap = new HashMap<>();
-    for (int c = headerRow.getFirstCellNum(); c < headerRow.getLastCellNum(); c++) {
-      Cell hc = headerRow.getCell(c);
-      String hv = (hc == null) ? "" : headerFormatter.formatCellValue(hc);
-      String norm = hv == null ? "" : hv.trim().toLowerCase().replaceAll("\\s+", " ");
-      if (!norm.isEmpty()) headerIndexMap.put(norm, c);
-    }
+    Map<String, Integer> headerIndexMap = buildTransactionHeaderRowToIndexMap(headerRow);
 
     Map<ColumnField, Integer> columnNameToIndexMap = columnFields.stream().collect(
       Collectors.toMap(
@@ -178,6 +178,20 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     return readAndMapTransactions(sheet, transactionStartRow, transactionTableConfig, columnNameToIndexMap);
   }
 
+  private static @NotNull Map<String, Integer> buildTransactionHeaderRowToIndexMap(Row headerRow) {
+    DataFormatter headerFormatter = new DataFormatter();
+    Map<String, Integer> headerIndexMap = new HashMap<>();
+
+    for (int c = headerRow.getFirstCellNum(); c < headerRow.getLastCellNum(); c++) {
+      Cell hc = headerRow.getCell(c);
+      String hv = (hc == null) ? "" : headerFormatter.formatCellValue(hc);
+      String norm = hv == null ? "" : hv.trim().toLowerCase().replaceAll("\\s+", " ");
+      if (!norm.isEmpty()) headerIndexMap.put(norm, c);
+    }
+
+    return headerIndexMap;
+  }
+
   @NotNull
   Set<TransactionRecord> readAndMapTransactions(Sheet sheet, int startingRow, TransactionTableConfig transactionTableConfig,
                                                 Map<ColumnField, Integer> columnNameToIndexMap) {
@@ -189,38 +203,28 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
 
     for (int i = startingRow; i < sheet.getPhysicalNumberOfRows(); i++) {
       Row currentRow = sheet.getRow(i);
-      if (currentRow == null) {
-        blankRowStreak++;
-        if (blankRowStreak >= 3) break;
-        else continue;
-      }
-      boolean allBlank = columnNameToIndexMap.values().stream().allMatch(colIdx -> {
-        if (colIdx == null || colIdx < 0) return true;
-        Cell c = currentRow.getCell(colIdx);
-        String v = (c == null) ? "" : formatter.formatCellValue(c, evaluator).trim();
-        return v.isEmpty();
-      });
-      if (allBlank) {
-        blankRowStreak++;
-        if (blankRowStreak >= 3) break;
-        else continue;
+      boolean allBlank = isRowBlank(columnNameToIndexMap, currentRow, formatter, evaluator);
+
+      if (currentRow == null || allBlank) {
+        if (blankRowStreak++ >= 3) {
+          break;
+        }
       } else {
         blankRowStreak = 0;
       }
+
 
       // Map Row to TransactionRecord
       final BiFunction<Row, Map<ColumnField, Integer>, TransactionRecord> transactionRecordFunction = (rowToRead, colNameToIdx) -> {
         Optional<JsonObject> finalJsonForRow = colNameToIdx.entrySet()
           .stream()
-          .map(entry -> applyColumnFieldConfig(rowToRead, entry, formatter, evaluator))
-          .map(TransformTransactionRecord::parseTransactionRow)
+          .map(entry -> applyColumnFieldConfig(rowToRead, entry, formatter, evaluator)).map(TransformTransactionRecord::parseDataInTransactionRow)
           .reduce((jo1, jo2) -> {
             jo2.keySet()
               .forEach(key -> jo1.asMap().putIfAbsent(key, jo2.get(key)));
 
             //For error at field level
-            jo2.keySet().stream()
-              .filter(key -> Strings.CI.equals("error", key))
+            jo2.keySet().stream().filter(key -> Strings.CI.equals(ERROR, key))
               .forEach(key -> jo1.asMap()
                 .computeIfPresent(key, (key1, value) ->
                   new JsonPrimitive(value.getAsString() + "|" + jo2.get(key1).getAsString())
@@ -253,6 +257,15 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     return transactionRecords;
   }
 
+  private static boolean isRowBlank(Map<ColumnField, Integer> columnNameToIndexMap, Row currentRow, DataFormatter formatter, FormulaEvaluator evaluator) {
+    return columnNameToIndexMap.values().stream().allMatch(colIdx -> {
+      if (colIdx == null || colIdx < 0) return true;
+      Cell c = currentRow.getCell(colIdx);
+      String v = (c == null) ? "" : formatter.formatCellValue(c, evaluator).trim();
+      return v.isEmpty();
+    });
+  }
+
   /**
    * Helps to determine if we are reading beyond transaction table rows.
    *
@@ -268,13 +281,13 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     long numberOfColumnsParsed = mappedToPropertiesList.stream()
       .filter(key -> {
         JsonElement el = map.get(key);
-        if (Strings.CI.startsWith("Withdrawal Amount", key.trim())) {
-
-        }
+//        if (Strings.CI.startsWith("Withdrawal Amount", key.trim())) {
+//
+//        }
         return el != null && !el.isJsonNull() && StringUtils.isNotBlank(el.getAsString());
       })
       .count();
-    JsonElement errors = jsonObject.get("error");
+    JsonElement errors = jsonObject.get(ERROR);
     if (errors != null && errors.getAsString().split("\\|").length > 3) {
       return false;
     }

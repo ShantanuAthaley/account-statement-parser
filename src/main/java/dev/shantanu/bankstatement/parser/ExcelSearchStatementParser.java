@@ -228,12 +228,12 @@ class ExcelSearchStatementParser implements AccountStatementParser {
 
       logger.debug("fieldLabel = {}  fieldValue = {}", fieldLabel, fieldValue);
 
-      JsonObject multiFields = getPatternMappedFields(fieldValue, pattern, patternMappedFields);
+      JsonObject regexParsedValue = getPatternMappedFields(fieldValue, pattern, patternMappedFields);
 
       JsonObject field = new JsonObject();
 
-      if (!multiFields.isEmpty()) {
-        multiFields.asMap().forEach(field::add);
+      if (!regexParsedValue.isEmpty()) {
+        regexParsedValue.asMap().forEach(field::add);
       } else {
         field.addProperty(fieldConfig.name(), fieldValue);
       }

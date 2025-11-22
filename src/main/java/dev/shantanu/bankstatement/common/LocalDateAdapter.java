@@ -16,47 +16,44 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class LocalDateAdapter implements JsonSerializer<LocalDate>, JsonDeserializer<LocalDate> {
-  private static final DateTimeFormatter FORMATTER;
-  private static final DateTimeFormatter RAW_FORMATTER;
-  private static final Logger logger;
+  private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE;
+  private static final DateTimeFormatter RAW_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+  private static final Logger logger = LoggerFactory.getLogger(LocalDateAdapter.class);
 
-  public LocalDateAdapter() {
-  }
-
+  @Override
   public JsonElement serialize(LocalDate src, Type typeOfSrc, JsonSerializationContext context) {
     try {
       return new JsonPrimitive(src.format(FORMATTER));
     } catch (Exception exception) {
       logger.error("Exception while parsing source date = {}. Exception = {} ", src, exception.getMessage());
-      return null;
     }
+    return null;
   }
 
+  @Override
   public LocalDate deserialize(JsonElement json, Type typeOfT, JsonDeserializationContext context) throws JsonParseException {
     try {
       return LocalDate.parse(json.getAsString(), FORMATTER);
-    } catch (Exception var7) {
+    } catch (Exception _) {
       try {
         return LocalDate.parse(json.getAsString(), RAW_FORMATTER);
       } catch (Exception exception) {
         logger.error("Exception while parsing source json = {}, exception is {}", json, exception.getMessage());
-        return null;
       }
     }
+    return null;
   }
 
-  static void main(String[] args) {
-    Gson gson = (new GsonBuilder()).registerTypeAdapter(LocalDate.class, new LocalDateAdapter()).create();
+  static void main() {
+    Gson gson = new GsonBuilder()
+      .registerTypeAdapter(LocalDate.class, new LocalDateAdapter())
+      .create();
+
     LocalDate date = LocalDate.of(2025, 11, 13);
     String json = gson.toJson(date);
     logger.info("Serialized LocalDate: {}", json);
-    LocalDate deserializedDate = (LocalDate) gson.fromJson(json, LocalDate.class);
-    logger.info("Deserialized LocalDate: {}", deserializedDate);
-  }
 
-  static {
-    FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE;
-    RAW_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-    logger = LoggerFactory.getLogger(LocalDateAdapter.class);
+    LocalDate deserializedDate = gson.fromJson(json, LocalDate.class);
+    logger.info("Deserialized LocalDate: {}", deserializedDate);
   }
 }
