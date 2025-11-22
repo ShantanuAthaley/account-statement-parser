@@ -236,9 +236,7 @@ public record TransformTransactionRecord() {
                                            DataFormatter formatter,
                                            FormulaEvaluator evaluator) {
     if (currentRow == null || isRowBlank(columnMap, currentRow, formatter, evaluator)) {
-      if (consecutiveBlankRows.incrementAndGet() > MAX_CONSECUTIVE_BLANK_ROWS) {
-        return false;
-      }
+      return consecutiveBlankRows.incrementAndGet() <= MAX_CONSECUTIVE_BLANK_ROWS;
     } else {
       consecutiveBlankRows.set(0);
     }
@@ -279,7 +277,7 @@ public record TransformTransactionRecord() {
   private JsonObject mergeJsonObjects(JsonObject first, JsonObject second) {
     second.keySet().forEach(key -> {
       if (Strings.CI.equals(ERROR, key)) {
-        first.asMap().computeIfPresent(key, (k, v) ->
+        first.asMap().computeIfPresent(key, (_, v) ->
           new JsonPrimitive(v.getAsString() + "|" + second.get(key).getAsString())
         );
       } else {
@@ -320,7 +318,7 @@ public record TransformTransactionRecord() {
    *
    * @param jsonObject   JsonObject
    * @param columnFields List<ColumnField>
-   * @return boolean true - when we can read at least 4 non null/non empty values else false
+   * @return boolean true - when we can read at least 4 non-null/non-empty values else false
    */
   private boolean isValidTransactionRecord(JsonObject jsonObject, List<ColumnField> columnFields) {
     List<String> mappedToPropertiesList = columnFields.stream().map(ColumnField::mappedTo).toList();
