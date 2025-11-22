@@ -58,26 +58,26 @@ public record TransformTransactionRecord() {
     String recordValue = jsonObject.get(CONFIG_KEY_VALUE).getAsString();
 
     switch (dataType) {
-      case "int" -> parseNumericValues(recordValue, outputJson, recordKey, ERROR);
-      case "LocalDate" -> parseDateValues(recordValue, outputJson, recordKey, ERROR);
-      case "BigDecimal" -> parseDecimalValues(recordValue, outputJson, recordKey, ERROR);
+      case "int" -> parseNumericValues(recordValue, outputJson, recordKey);
+      case "LocalDate" -> parseDateValues(recordValue, outputJson, recordKey);
+      case "BigDecimal" -> parseDecimalValues(recordValue, outputJson, recordKey);
       case "String" -> outputJson.addProperty(recordKey, recordValue);
       default -> throw new IllegalStateException("Not supported data-type for conversion: " + dataType);
     }
     return outputJson;
   }
 
-  private static void parseNumericValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
+  private static void parseNumericValues(String recordValue, JsonObject outputJson, String recordKey) {
     try {
       int value = Integer.parseInt(recordValue);
       outputJson.addProperty(recordKey, value);
     } catch (NumberFormatException _) {
-      outputJson.addProperty(error, String.format("Error parsing  %s as integer value.", recordValue));
+      outputJson.addProperty(TransformTransactionRecord.ERROR, String.format("Error parsing  %s as integer value.", recordValue));
       outputJson.addProperty(recordKey, recordValue);
     }
   }
 
-  private static void parseDecimalValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
+  private static void parseDecimalValues(String recordValue, JsonObject outputJson, String recordKey) {
     try {
       String s = recordValue == null ? "" : recordValue.trim();
       s = s.replace("₹", "");
@@ -92,12 +92,12 @@ public record TransformTransactionRecord() {
       if (negative) value = value.negate();
       outputJson.addProperty(recordKey, value);
     } catch (Exception _) {
-      outputJson.addProperty(error, String.format("Error parsing  %s as BigDecimal value", recordValue));
+      outputJson.addProperty(TransformTransactionRecord.ERROR, String.format("Error parsing  %s as BigDecimal value", recordValue));
       outputJson.addProperty(recordKey, recordValue);
     }
   }
 
-  private static void parseDateValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
+  private static void parseDateValues(String recordValue, JsonObject outputJson, String recordKey) {
     final String[] patterns = {"dd/MM/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "d/M/yyyy"};
     Optional<LocalDate> parsedDate = Arrays.stream(patterns)
       .map(pattern -> {
@@ -114,7 +114,7 @@ public record TransformTransactionRecord() {
     if (parsedDate.isPresent()) {
       outputJson.addProperty(recordKey, String.valueOf(parsedDate.get()));
     } else {
-      outputJson.addProperty(error, String.format("Error parsing %s as LocalDate value.", recordValue));
+      outputJson.addProperty(TransformTransactionRecord.ERROR, String.format("Error parsing %s as LocalDate value.", recordValue));
       outputJson.addProperty(recordKey, recordValue);
     }
   }
