@@ -22,7 +22,6 @@ import java.io.File;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,37 +55,17 @@ class ExcelSearchStatementParser implements AccountStatementParser {
   public static final String CONFIG_KEY_SEARCH_KEYWORDS = "searchKeywords";
   public static final String CONFIG_KEY_FIELDS = "fields";
   private static final Logger logger = LoggerFactory.getLogger(ExcelSearchStatementParser.class);
+  public static final String CONFIG_SECTION_HEADER = "header";
+  public static final String CONFIG_SECTION_SEARCH_CRITERIA = "search_criteria";
+  public static final String CONFIG_SECTION_ADVANCE_SEARCH = "advance_search";
+  public static final String CONFIG_SECTION_TRANSACTIONS_TABLE = "transactions_table";
   private final StatementConfiguration statementConfiguration;
   private final File statementFile;
-  private final TransformTransactionRecord transformTransactionRecord = new TransformTransactionRecord(this);
+  private final TransformTransactionRecord transformTransactionRecord = new TransformTransactionRecord();
 
   public ExcelSearchStatementParser(File statementFile, StatementConfiguration statementConfiguration) {
     this.statementFile = statementFile;
     this.statementConfiguration = statementConfiguration;
-  }
-
-  private static String findStringValueInCurrentRow(Sheet sheet, Row row, List<String> searchFor,
-                                                    int startCol, SearchRangeConfig range) {
-    Iterator<Cell> cellIterator = row.cellIterator();
-    while (cellIterator.hasNext()) {
-      Cell next = cellIterator.next();
-
-      if (reachedEndOfSearchableArea(startCol, range, next)) {
-        return null;
-      }
-
-      String cellValue = ParserUtils.getStringValueOf(next).toLowerCase();
-      boolean foundHeader = searchFor.stream().map(str -> str.trim().toLowerCase()).anyMatch(cellValue::contains);
-      if (foundHeader) {
-        sheet.setActiveCell(next.getAddress());
-        return cellValue;
-      }
-    }
-    return null;
-  }
-
-  private static boolean reachedEndOfSearchableArea(int startCol, SearchRangeConfig range, Cell next) {
-    return next.getAddress().getColumn() > (startCol + range.columns());
   }
 
   @Override
@@ -124,7 +103,7 @@ class ExcelSearchStatementParser implements AccountStatementParser {
 
     logger.debug("firstRowNum={} lastRowNum={} physicalNumberOfRows={} physicalNumberOfCells={} firstCellNum={} lastCellNum={}", firstRowNum, lastRowNum, physicalNumberOfRows, physicalNumberOfCells, firstCellNum, lastCellNum);
 
-    return parsedSections(jsonSectionConfigList, sheet);
+    return parseExcelBySections(jsonSectionConfigList, sheet);
 
   }
 
@@ -133,7 +112,7 @@ class ExcelSearchStatementParser implements AccountStatementParser {
    * @param sheet                 represents input file sheet object
    * @return {@link AccountStatement}
    */
-  private AccountStatement parsedSections(List<JsonObject> jsonSectionConfigList, Sheet sheet) {
+  private AccountStatement parseExcelBySections(List<JsonObject> jsonSectionConfigList, Sheet sheet) {
     JsonObject parsedSections = new JsonObject();
     Set<TransactionRecord> transactions = Set.of();
 
@@ -150,7 +129,7 @@ class ExcelSearchStatementParser implements AccountStatementParser {
       }
 
       switch (sectionId) {
-        case "header" -> {
+        case CONFIG_SECTION_HEADER -> {
           String headerTitle = readHeaderSection(sheet, sectionConfig);
           if (StringUtils.isNotEmpty(headerTitle)) {
             parsedJsonSection.addProperty(CONFIG_KEY_TITLE, headerTitle);
@@ -159,13 +138,13 @@ class ExcelSearchStatementParser implements AccountStatementParser {
             parsedJsonSection.addProperty(ERROR, "Could not find header");
           }
         }
-        case "search_criteria" -> {
+        case CONFIG_SECTION_SEARCH_CRITERIA -> {
           List<FieldConfiguration> fieldConfigList = getFieldListForSection(sectionConfig.getAsJsonArray(CONFIG_KEY_FIELDS));
           var parsedFieldsJson = readAndMapFields(sheet, fieldConfigList);
           parsedFieldsJson.asMap().forEach(parsedJsonSection.asMap()::putIfAbsent);
           parsedSections.add(sectionId, parsedJsonSection);
         }
-        case "advance_search" -> {
+        case CONFIG_SECTION_ADVANCE_SEARCH -> {
           boolean skip = sectionConfig.get("skip").getAsBoolean();
           if (!skip) {
             List<FieldConfiguration> fieldConfigList = getFieldListForSection(sectionConfig.getAsJsonArray(CONFIG_KEY_FIELDS));
@@ -173,7 +152,7 @@ class ExcelSearchStatementParser implements AccountStatementParser {
             parsedJsonSection.add(sectionId, parsedFieldsJson);
           }
         }
-        case "transactions_table" -> {
+        case CONFIG_SECTION_TRANSACTIONS_TABLE -> {
           List<String> searchFor = sectionConfig.getAsJsonArray(CONFIG_KEY_SEARCH_KEYWORDS)
             .asList()
             .stream()
@@ -186,7 +165,7 @@ class ExcelSearchStatementParser implements AccountStatementParser {
         default -> logger.info("Don't have capability to parse section with id = {} ", sectionId);
       }
     }
-    TransactionInfo transactionInfo = GSON.instance().fromJson(parsedSections.get("search_criteria").getAsJsonObject(), TransactionInfo.class);
+    TransactionInfo transactionInfo = GSON.instance().fromJson(parsedSections.get(CONFIG_SECTION_SEARCH_CRITERIA).getAsJsonObject(), TransactionInfo.class);
     return new AccountStatement(transactionInfo, transactions);
 
 
@@ -199,12 +178,6 @@ class ExcelSearchStatementParser implements AccountStatementParser {
         current.asMap().forEach(accumulatorMap::putIfAbsent);
         return accumulator;
       });
-  }
-
-  String findStringValueInCurrentRow(Sheet sheet, Row row, List<String> searchFor) {
-    int startCol = row.getFirstCellNum();
-    SearchRangeConfig searchRangeConfig = new SearchRangeConfig(sheet.getPhysicalNumberOfRows(), row.getPhysicalNumberOfCells());
-    return findStringValueInCurrentRow(sheet, row, searchFor, startCol, searchRangeConfig);
   }
 
   private JsonObject getFieldValue(Sheet sheet, FieldConfiguration fieldConfig) {
@@ -309,7 +282,7 @@ class ExcelSearchStatementParser implements AccountStatementParser {
     for (int i = startRow; i < startRow + range.rows(); i++) {
       Row row = sheet.getRow(i);
 
-      String cellValue = findStringValueInCurrentRow(sheet, row, searchFor, startCol, range);
+      String cellValue = ParserUtils.findStringValueInCurrentRow(sheet, row, searchFor, startCol, range);
       if (cellValue != null) {
         String cellReference = sheet.getActiveCell().formatAsR1C1String();
         section.addProperty("cellReference", cellReference);

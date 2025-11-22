@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -23,9 +24,10 @@ import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.BiFunction;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.poi.ss.usermodel.Cell;
@@ -38,13 +40,15 @@ import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchStatementParser) {
+public record TransformTransactionRecord() {
 
   public static final String CONFIG_KEY_DISPLAY_NAME = "displayName";
   public static final String CONFIG_KEY_DATA_TYPE = "dataType";
   public static final String CONFIG_KEY_VALUE = "value";
   public static final String ERROR = "error";
   private static final Logger logger = LoggerFactory.getLogger(TransformTransactionRecord.class);
+  private static final int MAX_CONSECUTIVE_BLANK_ROWS = 3;
+  private static final AtomicInteger consecutiveBlankRows = new AtomicInteger(0);
 
   private static @NotNull JsonObject parseDataInTransactionRow(JsonObject jsonObject) {
     JsonObject outputJson = new JsonObject();
@@ -94,21 +98,24 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
   }
 
   private static void parseDateValues(String recordValue, JsonObject outputJson, String recordKey, String error) {
-    LocalDate parsed = null;
-    String[] patterns = {"dd/MM/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "d/M/yyyy"};
-    for (String p : patterns) {
-      try {
-        parsed = LocalDate.parse(recordValue, DateTimeFormatter.ofPattern(p));
-        break;
-      } catch (DateTimeParseException _) {
-        //ignore
-      }
-    }
-    if (parsed != null) {
-      outputJson.addProperty(recordKey, String.valueOf(parsed));
+    final String[] patterns = {"dd/MM/yyyy", "dd-MM-yyyy", "yyyy-MM-dd", "d/M/yyyy"};
+    Optional<LocalDate> parsedDate = Arrays.stream(patterns)
+      .map(pattern -> {
+        try {
+          return Optional.of(LocalDate.parse(recordValue, DateTimeFormatter.ofPattern(pattern)));
+        } catch (DateTimeParseException _) {
+          return Optional.<LocalDate>empty();
+        }
+      })
+      .filter(Optional::isPresent)
+      .map(Optional::get)
+      .findFirst();
+
+    if (parsedDate.isPresent()) {
+      outputJson.addProperty(recordKey, String.valueOf(parsedDate.get()));
     } else {
-      outputJson.addProperty(error, String.format("Error parsing  %s as LocalDate value.", recordValue));
-      outputJson.addProperty(recordKey, String.valueOf(recordValue));
+      outputJson.addProperty(error, String.format("Error parsing %s as LocalDate value.", recordValue));
+      outputJson.addProperty(recordKey, recordValue);
     }
   }
 
@@ -137,7 +144,7 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     //Look for Title (can be skipped) = Transactions List
     for (int i = startRowNumber; i < physicalNumberOfRows; i++) {
       Row row = sheet.getRow(i);
-      String stringValueInCurrentRow = excelSearchStatementParser.findStringValueInCurrentRow(sheet, row, searchFor);
+      String stringValueInCurrentRow = ParserUtils.findStringValueInCurrentRow(sheet, row, searchFor);
       if (StringUtils.isNotEmpty(stringValueInCurrentRow)) {
         startRowNumber = sheet.getActiveCell().getRow() + 1;
         break;
@@ -149,7 +156,7 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     for (int i = startRowNumber; i < physicalNumberOfRows; i++) {
       Row row = sheet.getRow(i);
       List<String> displayNames = columnFields.stream().map(ColumnField::displayName).toList();
-      if (Objects.nonNull(excelSearchStatementParser.findStringValueInCurrentRow(sheet, row, displayNames)))
+      if (Objects.nonNull(ParserUtils.findStringValueInCurrentRow(sheet, row, displayNames)))
         break;
     }
     Row headerRow = sheet.getRow(sheet.getActiveCell().getRow());
@@ -192,69 +199,111 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     return headerIndexMap;
   }
 
+  /**
+   * Reads and maps rows from the sheet into TransactionRecord objects.
+   * Stops processing after encountering 3 or more consecutive blank rows.
+   *
+   * @param sheet                  The sheet containing transaction data
+   * @param startingRow            The row number to start processing from (0-based)
+   * @param transactionTableConfig Configuration for the transaction table
+   * @param columnNameToIndexMap   Mapping of column fields to their indices
+   * @return Set of parsed TransactionRecord objects
+   */
   @NotNull
-  Set<TransactionRecord> readAndMapTransactions(Sheet sheet, int startingRow, TransactionTableConfig transactionTableConfig,
+  Set<TransactionRecord> readAndMapTransactions(Sheet sheet, int startingRow,
+                                                TransactionTableConfig transactionTableConfig,
                                                 Map<ColumnField, Integer> columnNameToIndexMap) {
 
-    Set<TransactionRecord> transactionRecords = new LinkedHashSet<>();
     DataFormatter formatter = new DataFormatter();
     FormulaEvaluator evaluator = sheet.getWorkbook().getCreationHelper().createFormulaEvaluator();
-    int blankRowStreak = 0;
 
-    for (int i = startingRow; i < sheet.getPhysicalNumberOfRows(); i++) {
-      Row currentRow = sheet.getRow(i);
-      boolean allBlank = isRowBlank(columnNameToIndexMap, currentRow, formatter, evaluator);
+    Set<TransactionRecord> transactionRecords = IntStream.range(startingRow, sheet.getPhysicalNumberOfRows())
+      .mapToObj(sheet::getRow)
+      .takeWhile(row -> shouldContinueProcessing(row, columnNameToIndexMap, formatter, evaluator))
+      .map(row -> createTransactionRecord(row, columnNameToIndexMap, formatter, evaluator, transactionTableConfig))
+      .filter(Objects::nonNull)
+      .collect(Collectors.toCollection(LinkedHashSet::new));
 
-      if (currentRow == null || allBlank) {
-        if (blankRowStreak++ >= 3) {
-          break;
-        }
-      } else {
-        blankRowStreak = 0;
-      }
-
-
-      // Map Row to TransactionRecord
-      final BiFunction<Row, Map<ColumnField, Integer>, TransactionRecord> transactionRecordFunction = (rowToRead, colNameToIdx) -> {
-        Optional<JsonObject> finalJsonForRow = colNameToIdx.entrySet()
-          .stream()
-          .map(entry -> applyColumnFieldConfig(rowToRead, entry, formatter, evaluator)).map(TransformTransactionRecord::parseDataInTransactionRow)
-          .reduce((jo1, jo2) -> {
-            jo2.keySet()
-              .forEach(key -> jo1.asMap().putIfAbsent(key, jo2.get(key)));
-
-            //For error at field level
-            jo2.keySet().stream().filter(key -> Strings.CI.equals(ERROR, key))
-              .forEach(key -> jo1.asMap()
-                .computeIfPresent(key, (key1, value) ->
-                  new JsonPrimitive(value.getAsString() + "|" + jo2.get(key1).getAsString())
-                ));
-            return jo1;
-          });
-
-        return finalJsonForRow.map(jsonObject -> {
-          if (isValidTransactionRecord(jsonObject, transactionTableConfig.columnFields()))
-            return GSON.instance().fromJson(jsonObject, TransactionRecord.class);
-          else
-            return null;
-        }).orElse(null);
-      };
-      TransactionRecord transactionRecord = transactionRecordFunction.apply(currentRow, columnNameToIndexMap);
-      if (transactionRecord != null) {
-        transactionRecords.add(transactionRecord);
-      }
-    }
-    logger.debug("Parsed {} transactions", transactionRecords.size());
-
-    List<String> errorList = transactionRecords.stream().map(TransactionRecord::error).filter(Objects::nonNull).toList();
-    if (!errorList.isEmpty()) {
-      String first = errorList.getFirst();
-      String last = errorList.getLast();
-      long totalErrors = errorList.size();
-      logger.debug("Errors encountered  = {}. First Error = {}. Last Error = {} ", totalErrors, first, last);
-    }
-
+    logProcessingResults(transactionRecords);
     return transactionRecords;
+  }
+
+  /**
+   * Determines if processing should continue based on blank row detection.
+   */
+  private boolean shouldContinueProcessing(Row currentRow,
+                                           Map<ColumnField, Integer> columnMap,
+                                           DataFormatter formatter,
+                                           FormulaEvaluator evaluator) {
+    if (currentRow == null || isRowBlank(columnMap, currentRow, formatter, evaluator)) {
+      if (consecutiveBlankRows.incrementAndGet() > MAX_CONSECUTIVE_BLANK_ROWS) {
+        return false;
+      }
+    } else {
+      consecutiveBlankRows.set(0);
+    }
+    return true;
+  }
+
+  /**
+   * Creates a TransactionRecord from a row if it's valid.
+   */
+  private TransactionRecord createTransactionRecord(Row row,
+                                                    Map<ColumnField, Integer> columnMap,
+                                                    DataFormatter formatter,
+                                                    FormulaEvaluator evaluator,
+                                                    TransactionTableConfig config) {
+    return Optional.ofNullable(processRowToJson(row, columnMap, formatter, evaluator))
+      .filter(json -> isValidTransactionRecord(json, config.columnFields()))
+      .map(json -> GSON.instance().fromJson(json, TransactionRecord.class))
+      .orElse(null);
+  }
+
+  /**
+   * Processes a single row into a JsonObject.
+   */
+  private JsonObject processRowToJson(Row row,
+                                      Map<ColumnField, Integer> columnMap,
+                                      DataFormatter formatter,
+                                      FormulaEvaluator evaluator) {
+    return columnMap.entrySet().stream()
+      .map(entry -> applyColumnFieldConfig(row, entry, formatter, evaluator))
+      .map(TransformTransactionRecord::parseDataInTransactionRow)
+      .reduce(this::mergeJsonObjects)
+      .orElse(null);
+  }
+
+  /**
+   * Merges two JsonObjects, combining error messages when necessary.
+   */
+  private JsonObject mergeJsonObjects(JsonObject first, JsonObject second) {
+    second.keySet().forEach(key -> {
+      if (Strings.CI.equals(ERROR, key)) {
+        first.asMap().computeIfPresent(key, (k, v) ->
+          new JsonPrimitive(v.getAsString() + "|" + second.get(key).getAsString())
+        );
+      } else {
+        first.asMap().putIfAbsent(key, second.get(key));
+      }
+    });
+    return first;
+  }
+
+  /**
+   * Logs the results of transaction processing.
+   */
+  private void logProcessingResults(Set<TransactionRecord> records) {
+    logger.debug("Parsed {} transactions", records.size());
+
+    List<String> errors = records.stream()
+      .map(TransactionRecord::error)
+      .filter(Objects::nonNull)
+      .toList();
+
+    if (!errors.isEmpty()) {
+      logger.debug("Errors encountered = {}. First Error = {}. Last Error = {}",
+        errors.size(), errors.getFirst(), errors.getLast());
+    }
   }
 
   private static boolean isRowBlank(Map<ColumnField, Integer> columnNameToIndexMap, Row currentRow, DataFormatter formatter, FormulaEvaluator evaluator) {
@@ -281,9 +330,6 @@ public record TransformTransactionRecord(ExcelSearchStatementParser excelSearchS
     long numberOfColumnsParsed = mappedToPropertiesList.stream()
       .filter(key -> {
         JsonElement el = map.get(key);
-//        if (Strings.CI.startsWith("Withdrawal Amount", key.trim())) {
-//
-//        }
         return el != null && !el.isJsonNull() && StringUtils.isNotBlank(el.getAsString());
       })
       .count();
